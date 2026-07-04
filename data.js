@@ -75,3 +75,9 @@ const REQUESTS = [
     requiresRefund: false,
   },
 ];
+
+// Node (server.js) needs these via require(); browsers load this file as a
+// plain <script>, where `module` doesn't exist, so the export is guarded.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { CONSTRAINTS, VIP_LIST, KNOWLEDGE_BASE, REQUESTS };
+}

@@ -1,0 +1,9 @@
+{
+  "name": "dental-clinic-triage",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Decision-support prototype for dental clinic request triage",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

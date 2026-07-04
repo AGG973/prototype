@@ -44,7 +44,7 @@ function decideOwner(request, confidence) {
   return { owner: "Manager", auto: false, reason: `Low confidence (${confidence}%) or elevated risk — escalated to manager.` };
 }
 
-function buildActionAndResponse(request, ownerDecision, state) {
+function buildActionAndResponse(request, ownerDecision, state, knowledgeBase) {
   switch (request.type) {
     case "vip_cancellation": {
       const freedSlot = "2:00 PM";
@@ -64,8 +64,11 @@ function buildActionAndResponse(request, ownerDecision, state) {
       }
       const before = state.slotsRemainingToday;
       state.slotsRemainingToday -= 1;
+      const action = ownerDecision.auto
+        ? `AI books the earliest remaining slot today automatically (${before} → ${state.slotsRemainingToday} slots open).`
+        : `Confidence dipped below the auto-booking threshold — a staff member confirms details and books the earliest slot manually (${before} → ${state.slotsRemainingToday} slots open).`;
       return {
-        action: `AI books the earliest remaining slot today automatically (${before} → ${state.slotsRemainingToday} slots open).`,
+        action,
         response: "You're booked for the earliest available slot today. You'll receive a confirmation text shortly — see you then!",
       };
     }
@@ -76,9 +79,12 @@ function buildActionAndResponse(request, ownerDecision, state) {
       };
     }
     case "pricing_inquiry": {
-      const price = KNOWLEDGE_BASE.pricing.whitening;
+      const price = knowledgeBase.pricing.whitening;
+      const action = ownerDecision.auto
+        ? "AI answers directly from the pricing knowledge base — no human touch needed."
+        : "Confidence dipped below the auto-answer threshold — a staff member reviews the knowledge-base answer before it's sent.";
       return {
-        action: "AI answers directly from the pricing knowledge base — no human touch needed.",
+        action,
         response: `Hi ${request.customer}, our whitening options are: ${price}`,
       };
     }
@@ -93,14 +99,14 @@ function buildActionAndResponse(request, ownerDecision, state) {
   }
 }
 
-function triage(requests, constraints) {
+function triage(requests, constraints, knowledgeBase) {
   const state = { slotsRemainingToday: constraints.slotsRemainingToday };
 
   const decisions = requests.map((request) => {
     const priorityScore = computePriorityScore(request.factors);
     const confidence = computeConfidence(request);
     const ownerDecision = decideOwner(request, confidence);
-    const { action, response } = buildActionAndResponse(request, ownerDecision, state);
+    const { action, response } = buildActionAndResponse(request, ownerDecision, state, knowledgeBase);
 
     return {
       ...request,
@@ -118,4 +124,10 @@ function triage(requests, constraints) {
   decisions.forEach((d, i) => (d.priorityRank = i + 1));
 
   return decisions;
+}
+
+// Node (server.js) needs these via require(); browsers load this file as a
+// plain <script>, where `module` doesn't exist, so the export is guarded.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { computePriorityScore, computeConfidence, decideOwner, buildActionAndResponse, triage };
 }

@@ -55,6 +55,18 @@ header p { color: var(--muted); margin-top: 0; font-size: 0.9rem; }
   padding: 4px 10px;
 }
 
+.banner {
+  display: none;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--panel-border);
+}
+.banner-loading { background: rgba(79, 140, 255, 0.12); color: var(--accent); }
+.banner-ok { background: rgba(59, 201, 164, 0.12); color: var(--ai); }
+.banner-error { background: rgba(239, 91, 107, 0.12); color: var(--manager); }
+
 .card {
   background: var(--panel);
   border: 1px solid var(--panel-border);
