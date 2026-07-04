@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dental Clinic Triage — Decision Support Prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Dental Clinic Triage Dashboard</h1>
+      <p>5 simultaneous requests, ranked and routed by a rule-based decision engine.</p>
+    </header>
+
+    <div id="constraints" class="constraints"></div>
+    <div id="requests"></div>
+
+    <footer>Prototype — deterministic rule engine, no external AI calls.</footer>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
