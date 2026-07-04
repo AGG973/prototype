@@ -11,6 +11,32 @@ business rules in code — the LLM's confidence feeds into that decision, but
 can never override it (a refund can't get auto-approved just because the
 model feels confident about it).
 
+## Walkthrough (30-second summary)
+
+Five requests hit the clinic at once. For each one the app decides: **priority**
+(who gets handled first), **owner** (AI / Staff / Manager), the **next action**,
+the **customer response**, and **why**.
+
+1. Each request has factor scores (urgency, financial risk, reputational risk,
+   VIP status, complexity) → a fixed formula turns these into a **priority
+   score**, so ranking is deterministic, not guessed.
+2. Claude is called live for a **confidence score** + a drafted customer reply,
+   using the clinic's knowledge base and policies as context.
+3. Hard business rules sit on top of that confidence and can't be overridden:
+   refund/double-charge → **always Manager**; a public-review threat →
+   **always Staff**; VIP → **always Staff**. Only requests below those
+   tripwires get to fall through to confidence thresholds (≥80% → AI
+   auto-resolves, ≥55% → Staff confirms, else → Manager).
+4. Result: pricing questions and routine bookings get **auto-handled by AI**;
+   refunds and angry/VIP customers **always reach a human** — the two
+   required extremes, enforced in code rather than left to the model's
+   judgment.
+5. If Claude is unreachable, the app falls back to an offline version of the
+   same rules automatically (visible banner, same priority order) — it never
+   just breaks.
+
+See below for the full architecture and file-by-file breakdown.
+
 ## Architecture
 
 | File | Responsibility |
