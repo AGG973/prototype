@@ -74,3 +74,25 @@ npm start
 If the API key is missing, invalid, or the request fails, the page falls
 back to the offline rule-engine automatically (with a banner explaining
 why) — it never just hangs or shows a blank page.
+
+## Deploy it (public URL)
+
+This needs a persistent Node server (not a static host), since the Claude
+API key must stay server-side. `render.yaml` is set up for
+[Render](https://render.com)'s free tier:
+
+1. Push this repo to GitHub (already done if you're reading this there).
+2. On Render: **New → Blueprint**, pick this repo. It reads `render.yaml`
+   automatically and creates a free web service.
+3. Render will prompt you to set **`ANTHROPIC_API_KEY`** in its dashboard
+   (this is deliberate — the key is never in `render.yaml` or in git; you
+   paste it directly into Render's environment variable UI, the same way
+   `.env` works locally).
+4. Deploy. Render gives you a public `https://<name>.onrender.com` URL.
+
+Without step 3, the deployed app still works — it just falls back to the
+offline rule engine with the red "AI unavailable" banner, same as running
+locally without a key.
+
+Railway and Fly.io work too, with the same idea (Node server + one env var
+for the key); ask if you want configs for those instead.
