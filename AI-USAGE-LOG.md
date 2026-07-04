@@ -51,3 +51,65 @@ build window for a timed live challenge.
   were the two upfront architecture decisions (dynamic scoring vs. fixed
   order; multi-file vs. single artifact), both of which Claude asked for
   before writing any code.
+
+## 2026-07-04 — Made the triage engine dynamic via the Claude API
+
+**What I asked for:**
+Replace the static rule-based confidence scoring with a live call to the
+Claude API, using an API key I provided directly in chat, and "store it in
+`.gitignore` for security."
+
+**What Claude built:**
+- Flagged immediately, before building, that pasting a live API key into
+  chat may already have exposed it (transcripts/logs can retain it), and
+  recommended rotating/revoking it at console.anthropic.com after testing
+  — independent of anything else done in the session.
+- Corrected the framing of my request: `.gitignore` only keeps a secret out
+  of *git*, not out of the *browser* — a static frontend has no safe place
+  to hold an API key, since anything shipped to client JS is visible via
+  view-source. Proposed the actual fix: a small Node server holding the key
+  server-side, with the frontend calling that server instead of Anthropic
+  directly.
+- Built `server.js` (static file server + `POST /api/triage`) and
+  `ai-client.js` (server-only Claude API calls), with the key read from a
+  gitignored `.env` (added `.gitignore` and a committed `.env.example` with
+  a placeholder). Verified `.env` never appeared in `git status` or any
+  commit before pushing.
+- Kept priority scoring and AI/Staff/Manager owner assignment as
+  deterministic business rules in `engine.js` rather than letting the model
+  decide them — the AI's confidence score feeds into the existing hard
+  rules (refund → Manager, high reputational risk → Staff, VIP → Staff)
+  but can't override them, so a refund still can't get auto-approved just
+  because the model felt confident.
+- Added a frontend fallback: a green "Live" banner when the API succeeds,
+  a red "AI unavailable — offline fallback" banner with the deterministic
+  rule engine taking over if the server/API can't be reached. Verified both
+  states in a real headless browser.
+- Ran the server end-to-end with the real key and screenshotted the
+  results before considering it done, rather than just asserting it worked.
+
+**What I had to correct:**
+- Two bugs Claude caught itself during live testing, not flagged by me:
+  1. On the very first real run, 2 of 5 live API calls came back with
+     empty/malformed data, which would have crashed the whole batch (one
+     `Promise.all` failure took down all 5 cards). Fixed by switching to
+     `Promise.allSettled` with a per-request offline fallback, so one flaky
+     call can no longer sink the whole board.
+  2. A race condition: the "slots remaining" counter was being mutated in
+     whatever order the concurrent API calls happened to resolve, not the
+     fixed request order — meaning the "3 → 4 → 3 slots" narrative could
+     come out wrong depending on network timing. Fixed by resolving all AI
+     calls concurrently first, then applying the counter mutations in a
+     strict sequential pass afterward.
+  3. A live confidence dip (70–80%) on the booking request exposed a
+     wording bug: the action text always said "AI books... automatically"
+     even when the computed owner had fallen back to Staff. Fixed by
+     branching the action text on the actual owner decision.
+- Also encountered environment noise unrelated to the app itself (this
+  session's background-task tracker was silently killing detached
+  `node server.js` processes started with plain `&`/`nohup`, producing
+  confusing exit codes) — worked around by using the harness's own
+  background-task mechanism instead of shell backgrounding.
+- No corrections were requested by me directly; the substantive fixes above
+  were self-caught through actually running the server against the live
+  API rather than just reading the code.
