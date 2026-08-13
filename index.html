@@ -1,27 +1,400 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dental Clinic Triage — Decision Support Prototype</title>
-  <link rel="stylesheet" href="styles.css" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Copy Doctor</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+        },
+        colors: {
+          ink: '#0B0F14',
+          panel: '#0E141B',
+          vital: '#3DDC84',
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root {
+    /* score-reactive colors */
+    --good: #3DDC84;   /* medical monitor green */
+    --warn: #F5A623;   /* amber */
+    --bad:  #FF5C5C;   /* red */
+    --line: #E6EAE7;
+  }
+  * { box-sizing: border-box; }
+  html, body { font-family: 'Inter', system-ui, sans-serif; }
+  body { background: #0B0F14; color: #E8EDEA; -webkit-font-smoothing: antialiased; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  /* Dark instrument-monitor panel (score readout) */
+  .monitor {
+    background:
+      radial-gradient(120% 140% at 15% 0%, rgba(61,220,132,0.06), transparent 55%),
+      #0E141B;
+    border: 1px solid #1C2530;
+    border-radius: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* faint scanline grid, like an oscilloscope */
+  .monitor::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(rgba(61,220,132,0.045) 1px, transparent 1px);
+    background-size: 100% 26px; opacity: .6;
+  }
+
+  /* Clean chart card (light) */
+  .chart-card {
+    background: #FBFDFB; color: #0B0F14;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--stripe, var(--good));
+    border-radius: 14px;
+    transition: border-left-color .8s ease;
+  }
+
+  /* Radial gauge */
+  .gauge { position: relative; width: 148px; height: 148px; flex: none; }
+  .gauge svg { transform: rotate(-90deg); }
+  .gauge .track { stroke: #1C2530; }
+  .gauge .fill {
+    stroke: var(--good); stroke-linecap: round;
+    transition: stroke-dashoffset 1s cubic-bezier(.22,1,.36,1), stroke 1s ease;
+    filter: drop-shadow(0 0 6px rgba(61,220,132,0.55));
+  }
+  .gauge .num {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 52px; font-weight: 700; letter-spacing: -0.03em; line-height: 1;
+    color: var(--good); text-shadow: 0 0 18px rgba(61,220,132,0.45);
+    transition: color 1s ease, text-shadow 1s ease;
+  }
+
+  /* Breakdown chart rows */
+  .bar-track { height: 10px; background: #EDF0EE; border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; width: 0; border-radius: 999px; transition: width 1s cubic-bezier(.22,1,.36,1), background-color .8s ease; }
+
+  .tag { background: #FFF6E9; color: #9A5B00; border: 1px solid #F6DFB8; }
+
+  /* Variant tabs */
+  .tab {
+    border: 1px solid #232E3A; background: #10171F; color: #8FA0AD;
+    transition: all .18s ease;
+  }
+  .tab:hover { border-color: #33414E; color: #C7D2DA; }
+  .tab.active { background: var(--good); color: #06110A; border-color: var(--good); font-weight: 600; }
+
+  .quick button { transition: all .15s ease; }
+  .quick button:hover { border-color: var(--good); color: var(--good); }
+
+  .spinner {
+    width: 15px; height: 15px; border: 2px solid rgba(6,17,10,.35);
+    border-top-color: #06110A; border-radius: 50%; display: inline-block;
+    animation: spin .7s linear infinite; vertical-align: -3px; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #results { display: none; }
+  #results.show { display: block; animation: fadeUp .35s ease; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
 </head>
-<body>
-  <div class="wrap">
-    <header>
-      <h1>Dental Clinic Triage Dashboard</h1>
-      <p>5 simultaneous requests, ranked and routed by a rule-based decision engine.</p>
-    </header>
+<body class="font-sans">
+<div class="max-w-3xl mx-auto px-6 pt-10 pb-24">
 
-    <div id="constraints" class="constraints"></div>
-    <div id="banner" class="banner"></div>
-    <div id="requests"></div>
+  <!-- Header -->
+  <header class="flex items-center gap-3 mb-1">
+    <div class="w-11 h-11 rounded-xl grid place-items-center text-2xl border border-[#1C2530] bg-panel" style="box-shadow:0 0 22px rgba(61,220,132,0.18)">🩺</div>
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight text-white">Copy Doctor</h1>
+      <p class="mono text-[11px] tracking-[0.25em] text-vital/80 uppercase">Copy Vitals Monitor</p>
+    </div>
+  </header>
+  <p class="text-slate-400 text-[15px] mt-2 mb-7">Paste your marketing or listing copy. Get a diagnosis, a rewrite, and three ready-to-send variants.</p>
 
-    <footer>Prototype — deterministic rule engine, no external AI calls.</footer>
+  <!-- Input -->
+  <div class="monitor p-5">
+    <label class="mono text-[11px] tracking-[0.18em] uppercase text-slate-400 block mb-2" for="copy">Sample / Your copy</label>
+    <textarea id="copy" spellcheck="false"
+      class="w-full min-h-[140px] resize-y rounded-xl bg-[#0A0F15] text-slate-100 border border-[#1C2530] px-4 py-3 text-[15px] leading-relaxed focus:outline-none focus:border-vital/70 focus:ring-1 focus:ring-vital/40 placeholder:text-slate-600"></textarea>
+    <div class="flex items-center gap-4 mt-4">
+      <button id="diagnoseBtn"
+        class="bg-vital text-[#06110A] font-semibold rounded-xl px-6 py-3 text-[15px] hover:brightness-110 active:translate-y-px transition disabled:opacity-50 disabled:cursor-default">
+        Diagnose
+      </button>
+      <span id="status" class="text-slate-500 text-sm"></span>
+    </div>
+    <div id="topError" class="text-[#FF7A7A] font-medium text-sm mt-3"></div>
   </div>
 
-  <script src="data.js"></script>
-  <script src="engine.js"></script>
-  <script src="app.js"></script>
+  <!-- Results -->
+  <div id="results" class="mt-6 space-y-5">
+
+    <!-- Score readout (dark monitor) -->
+    <div class="monitor p-6">
+      <div class="flex items-center gap-7 flex-wrap relative z-10">
+        <div class="gauge">
+          <svg width="148" height="148" viewBox="0 0 148 148">
+            <circle class="track" cx="74" cy="74" r="64" fill="none" stroke-width="7"/>
+            <circle id="gaugeFill" class="fill" cx="74" cy="74" r="64" fill="none" stroke-width="7"
+                    stroke-dasharray="402.1" stroke-dashoffset="402.1"/>
+          </svg>
+          <div id="scoreNum" class="num mono">0</div>
+        </div>
+        <div class="flex-1 min-w-[240px]">
+          <div class="mono text-[11px] tracking-[0.22em] uppercase text-slate-400">Overall Copy Score</div>
+          <div class="text-slate-200 text-[15px] mt-1.5 mb-4" id="scoreVerdict">—</div>
+          <div class="mono text-[10px] tracking-[0.22em] uppercase text-slate-500 mb-1">Iteration Trend</div>
+          <div id="history" class="min-h-[58px]"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Breakdown chart -->
+    <div class="chart-card p-6">
+      <p class="mono text-[11px] tracking-[0.18em] uppercase text-slate-500 mb-5">Diagnosis · Vitals</p>
+      <div class="space-y-4">
+        <div class="grid grid-cols-[130px_1fr_44px] items-center gap-4">
+          <span class="text-[14px] font-medium text-slate-700">Clarity</span>
+          <div class="bar-track"><div class="bar-fill" id="clarityBar"></div></div>
+          <span class="mono text-[15px] font-semibold text-right tabular-nums" id="clarityVal">0</span>
+        </div>
+        <div class="grid grid-cols-[130px_1fr_44px] items-center gap-4">
+          <span class="text-[14px] font-medium text-slate-700">Urgency</span>
+          <div class="bar-track"><div class="bar-fill" id="urgencyBar"></div></div>
+          <span class="mono text-[15px] font-semibold text-right tabular-nums" id="urgencyVal">0</span>
+        </div>
+        <div class="grid grid-cols-[130px_1fr_44px] items-center gap-4">
+          <span class="text-[14px] font-medium text-slate-700">Emotional pull</span>
+          <div class="bar-track"><div class="bar-fill" id="emotionBar"></div></div>
+          <span class="mono text-[15px] font-semibold text-right tabular-nums" id="emotionVal">0</span>
+        </div>
+      </div>
+      <div class="mt-6">
+        <h3 class="mono text-[10px] tracking-[0.18em] uppercase text-slate-500 mb-2.5">Missing / weak info</h3>
+        <div class="flex flex-wrap gap-2" id="missingTags"></div>
+      </div>
+    </div>
+
+    <!-- Rewrite -->
+    <div class="chart-card p-6">
+      <div class="flex items-center justify-between mb-3">
+        <p class="mono text-[11px] tracking-[0.18em] uppercase text-slate-500">Polished rewrite</p>
+        <button class="copy-btn mono text-[12px] font-semibold text-slate-500 hover:text-slate-800 transition" data-copy="rewriteText">COPY</button>
+      </div>
+      <div class="whitespace-pre-wrap text-[15.5px] leading-relaxed text-slate-800" id="rewriteText"></div>
+    </div>
+
+    <!-- Variants -->
+    <div class="chart-card p-6">
+      <p class="mono text-[11px] tracking-[0.18em] uppercase text-slate-500 mb-4">Variants</p>
+      <div class="flex gap-2 flex-wrap mb-4" id="variantTabs">
+        <button class="tab active rounded-lg px-4 py-2 text-[14px]" data-v="social_caption">Social caption</button>
+        <button class="tab rounded-lg px-4 py-2 text-[14px]" data-v="formal">Formal</button>
+        <button class="tab rounded-lg px-4 py-2 text-[14px]" data-v="whatsapp">WhatsApp</button>
+      </div>
+      <div class="flex justify-end mb-1">
+        <button class="copy-btn mono text-[12px] font-semibold text-slate-500 hover:text-slate-800 transition" data-copy="variantBody">COPY</button>
+      </div>
+      <div class="whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800 min-h-[60px]" id="variantBody"></div>
+    </div>
+
+    <!-- Refine -->
+    <div class="chart-card p-6">
+      <p class="mono text-[11px] tracking-[0.18em] uppercase text-slate-500 mb-4">Refine it</p>
+      <div class="flex gap-3 flex-wrap">
+        <input id="feedback" placeholder="e.g. make it punchier, add urgency, shorten it"
+          class="flex-1 min-w-[240px] rounded-xl border border-slate-300 bg-white px-4 py-3 text-[15px] text-slate-800 focus:outline-none focus:border-vital focus:ring-1 focus:ring-vital/40 placeholder:text-slate-400" />
+        <button id="regenBtn"
+          class="rounded-xl px-6 py-3 text-[15px] font-semibold text-[#06110A] bg-vital hover:brightness-110 active:translate-y-px transition disabled:opacity-50">
+          Regenerate
+        </button>
+      </div>
+      <div class="quick flex flex-wrap gap-2 mt-3" id="quick">
+        <button class="rounded-full border border-slate-300 text-slate-500 px-3 py-1 text-[13px] bg-white">make it punchier</button>
+        <button class="rounded-full border border-slate-300 text-slate-500 px-3 py-1 text-[13px] bg-white">add urgency</button>
+        <button class="rounded-full border border-slate-300 text-slate-500 px-3 py-1 text-[13px] bg-white">shorten it</button>
+        <button class="rounded-full border border-slate-300 text-slate-500 px-3 py-1 text-[13px] bg-white">more luxurious tone</button>
+        <button class="rounded-full border border-slate-300 text-slate-500 px-3 py-1 text-[13px] bg-white">add a clear call to action</button>
+      </div>
+      <div id="regenError" class="text-[#E53935] font-medium text-sm mt-3"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SEED = `2 bed flat for rent in downtown. good location near shops and transport. has parking and a balcony. recently painted. available now. rent is negotiable. call for more info.`;
+
+const CIRC = 2 * Math.PI * 64; // gauge circumference (r=64)
+let state = { copy: '', rewrite: '', variants: {}, activeVariant: 'social_caption', scores: [] };
+
+const $ = (id) => document.getElementById(id);
+$('copy').value = SEED;
+
+function colorFor(v) {
+  if (v >= 75) return getComputedStyle(document.documentElement).getPropertyValue('--good').trim();
+  if (v >= 50) return getComputedStyle(document.documentElement).getPropertyValue('--warn').trim();
+  return getComputedStyle(document.documentElement).getPropertyValue('--bad').trim();
+}
+
+function animateScore(target) {
+  const el = $('scoreNum');
+  const start = parseInt(el.textContent, 10) || 0;
+  const color = colorFor(target);
+  const fill = $('gaugeFill');
+  fill.style.strokeDashoffset = CIRC * (1 - target / 100);
+  fill.style.stroke = color;
+  fill.style.filter = `drop-shadow(0 0 6px ${color}99)`;
+  el.style.color = color;
+  el.style.textShadow = `0 0 18px ${color}73`;
+  const dur = 900, t0 = performance.now();
+  function step(now) {
+    const p = Math.min((now - t0) / dur, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = Math.round(start + (target - start) * eased);
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+  $('scoreVerdict').textContent =
+    target >= 85 ? 'Excellent — ready to publish.' :
+    target >= 70 ? 'Solid, with room to sharpen.' :
+    target >= 50 ? 'Needs work to convert.' : 'Weak — big upside from a rewrite.';
+}
+
+function setBar(barId, valId, v) {
+  const bar = $(barId);
+  bar.style.width = v + '%';
+  bar.style.background = colorFor(v);
+  $(valId).textContent = v;
+  $(valId).style.color = colorFor(v);
+}
+
+// Heart-rate-style trend line of score progression
+function renderHistory() {
+  const h = $('history');
+  const s = state.scores;
+  if (!s.length) { h.innerHTML = ''; return; }
+  const W = 260, H = 46, pad = 8;
+  const n = s.length;
+  const color = colorFor(s[n - 1]);
+  const x = (i) => n === 1 ? pad : pad + (i / (n - 1)) * (W - 2 * pad);
+  const y = (v) => (H - pad) - (v / 100) * (H - 2 * pad);
+  const pts = s.map((v, i) => [x(i), y(v)]);
+  const line = pts.map((p) => p.join(',')).join(' ');
+  const dots = pts.map((p, i) =>
+    `<circle cx="${p[0]}" cy="${p[1]}" r="${i === n - 1 ? 4 : 3}" fill="${i === n - 1 ? color : '#0B0F14'}" stroke="${color}" stroke-width="1.75"/>`
+  ).join('');
+  const seq = s.map((v, i) =>
+    `<span style="color:${i === n - 1 ? color : '#8FA0AD'};font-weight:${i === n - 1 ? 700 : 500}">${v}</span>`
+  ).join('<span style="color:#465562;margin:0 6px">→</span>');
+  h.innerHTML =
+    `<div class="flex items-center gap-4 flex-wrap">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible">
+        <line x1="0" y1="${H - pad}" x2="${W}" y2="${H - pad}" stroke="#1C2530" stroke-width="1"/>
+        <polyline points="${line}" fill="none" stroke="${color}" stroke-width="2"
+          stroke-linejoin="round" stroke-linecap="round" style="filter:drop-shadow(0 0 4px ${color}66)"/>
+        ${dots}
+      </svg>
+      <div class="mono text-[15px]">${seq}</div>
+    </div>`;
+}
+
+function renderVariant() {
+  $('variantBody').textContent = state.variants[state.activeVariant] || '';
+}
+
+function render(data) {
+  state.rewrite = data.rewrite || '';
+  state.variants = data.variants || {};
+  state.scores.push(data.score);
+  renderHistory();
+  animateScore(data.score);
+  const b = data.breakdown || {};
+  setBar('clarityBar', 'clarityVal', b.clarity ?? 0);
+  setBar('urgencyBar', 'urgencyVal', b.urgency ?? 0);
+  setBar('emotionBar', 'emotionVal', b.emotional_pull ?? 0);
+  const tags = $('missingTags');
+  tags.innerHTML = '';
+  (b.missing_info || []).forEach((m) => {
+    const t = document.createElement('span');
+    t.className = 'tag mono text-[12px] px-2.5 py-1 rounded-md';
+    t.textContent = m;
+    tags.appendChild(t);
+  });
+  $('rewriteText').textContent = state.rewrite;
+  renderVariant();
+  // tint the left accent stripe of the light cards to the score color
+  document.querySelectorAll('.chart-card').forEach((c) => c.style.setProperty('--stripe', colorFor(data.score)));
+  $('results').classList.add('show');
+}
+
+async function call(payload, btn, errEl) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Diagnosing…';
+  errEl.textContent = '';
+  try {
+    const r = await fetch('/api/diagnose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Request failed');
+    render(data);
+    if (payload.currentRewrite !== undefined) $('feedback').value = '';
+  } catch (e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+$('diagnoseBtn').addEventListener('click', () => {
+  const copy = $('copy').value.trim();
+  if (!copy) { $('topError').textContent = 'Paste some copy first.'; return; }
+  state.copy = copy;
+  state.scores = [];
+  call({ copy }, $('diagnoseBtn'), $('topError'));
+});
+
+$('regenBtn').addEventListener('click', () => {
+  const feedback = $('feedback').value.trim() || 'make it stronger';
+  call({ copy: state.copy, currentRewrite: state.rewrite, feedback }, $('regenBtn'), $('regenError'));
+});
+
+$('variantTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab');
+  if (!btn) return;
+  document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+  btn.classList.add('active');
+  state.activeVariant = btn.dataset.v;
+  renderVariant();
+});
+
+$('quick').addEventListener('click', (e) => {
+  if (e.target.tagName === 'BUTTON') { $('feedback').value = e.target.textContent; $('regenBtn').click(); }
+});
+
+document.querySelectorAll('.copy-btn').forEach((b) => {
+  b.addEventListener('click', () => {
+    const text = $(b.dataset.copy).textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const o = b.textContent; b.textContent = 'COPIED'; setTimeout(() => (b.textContent = o), 1200);
+    });
+  });
+});
+</script>
 </body>
 </html>
