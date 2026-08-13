@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: dental-clinic-triage
+    name: copy-doctor
     runtime: node
     plan: free
     buildCommand: npm install

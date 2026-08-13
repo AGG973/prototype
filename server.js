@@ -1,119 +1,106 @@
-// ---------------------------------------------------------------------------
-// Tiny static file server + a single API endpoint that calls Claude.
-// No dependencies — Node 18+ ships a global fetch, and this reads .env by
-// hand so nothing needs `npm install`.
-//
-// This is the ONLY place the Anthropic API key is used. It is read from
-// process.env (populated from the gitignored .env file below) and never
-// sent to the browser.
-// ---------------------------------------------------------------------------
+// Copy Doctor — Express backend that asks Claude to diagnose & rewrite marketing copy.
+// Run: ANTHROPIC_API_KEY=sk-... node server.js
 
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-
-const { REQUESTS, CONSTRAINTS, VIP_LIST, KNOWLEDGE_BASE } = require("./data.js");
-const { computePriorityScore, computeConfidence, decideOwner, buildActionAndResponse } = require("./engine.js");
-const { assessRequest } = require("./ai-client.js");
-
-function loadEnvFile() {
-  const envPath = path.join(__dirname, ".env");
-  if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const idx = trimmed.indexOf("=");
-    if (idx === -1) continue;
-    const key = trimmed.slice(0, idx).trim();
-    const value = trimmed.slice(idx + 1).trim();
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-loadEnvFile();
+const path = require('path');
+const express = require('express');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const PORT = process.env.PORT || 3000;
-const MIME_TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
+const MODEL = process.env.MODEL || 'claude-sonnet-4-5';
 
-async function handleTriage(res) {
+const app = express();
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(__dirname));
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const SYSTEM_PROMPT = `You are Copy Doctor, an expert direct-response copywriter and conversion strategist.
+You diagnose raw marketing / property-listing copy and rewrite it to convert better.
+
+You MUST respond with ONLY a single valid JSON object and nothing else — no markdown,
+no code fences, no commentary before or after. The JSON must match this exact shape:
+
+{
+  "score": <integer 0-100, overall quality of the ORIGINAL copy>,
+  "breakdown": {
+    "clarity": <integer 0-100>,
+    "urgency": <integer 0-100>,
+    "emotional_pull": <integer 0-100>,
+    "missing_info": [<short strings naming concrete facts/details the copy should include but doesn't>]
+  },
+  "rewrite": "<a polished full rewrite of the copy — compelling, clear, ready to publish>",
+  "variants": {
+    "social_caption": "<punchy short social-media caption version, may use light emoji>",
+    "formal": "<professional, formal version suitable for a brochure or website>",
+    "whatsapp": "<friendly conversational version suitable for a WhatsApp/DM broadcast>"
+  }
+}
+
+Rules:
+- score reflects how good the ORIGINAL is, so an improved rewrite should earn a higher score next round.
+- missing_info: 2-5 items, each a short noun phrase (e.g. "price", "square footage", "contact method").
+- Keep the rewrite honest — never invent specific facts (exact prices, sizes) that weren't provided; instead use tasteful placeholders like [price] only if essential.
+- Output must be parseable by JSON.parse with no trailing text.`;
+
+function buildUserMessage({ copy, currentRewrite, feedback }) {
+  if (!currentRewrite && !feedback) {
+    return `Diagnose and rewrite the following marketing copy:\n\n"""\n${copy}\n"""`;
+  }
+  return `Here is the ORIGINAL marketing copy:\n\n"""\n${copy}\n"""\n\n` +
+    `Here is the CURRENT rewrite that should be improved further:\n\n"""\n${currentRewrite || ''}\n"""\n\n` +
+    `Apply this user feedback and produce a better version: "${feedback || 'make it stronger'}"\n\n` +
+    `Return the same JSON shape. The new score should reflect the improved rewrite.`;
+}
+
+// Pull the first top-level JSON object out of the model's text, defensively.
+function extractJson(text) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('No JSON object found in model response');
+  }
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+app.post('/api/diagnose', async (req, res) => {
   try {
-    const context = { constraints: CONSTRAINTS, vipList: VIP_LIST, knowledgeBase: KNOWLEDGE_BASE };
+    const copy = (req.body && req.body.copy || '').toString().trim();
+    if (!copy) return res.status(400).json({ error: 'Please provide some copy to diagnose.' });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'Server missing ANTHROPIC_API_KEY.' });
+    }
 
-    // Fire all 5 Claude calls concurrently for speed. Promise.allSettled
-    // (not .all) so one flaky/slow call can't take the whole board down —
-    // that request just falls back to the local rule engine's estimate.
-    const aiResults = await Promise.allSettled(REQUESTS.map((request) => assessRequest(request, context)));
-
-    // Apply state mutations (slot counter) in a plain sequential loop, in
-    // REQUESTS' fixed order — not in whatever order the network calls above
-    // happened to resolve, which would make the slot count non-deterministic.
-    const state = { slotsRemainingToday: CONSTRAINTS.slotsRemainingToday };
-    const decisions = REQUESTS.map((request, i) => {
-      const settled = aiResults[i];
-      const ai =
-        settled.status === "fulfilled"
-          ? settled.value
-          : { confidence: computeConfidence(request), response: null, reasoning: `AI call failed (${settled.reason.message}), used offline estimate.` };
-
-      const priorityScore = computePriorityScore(request.factors);
-      // Hard business rules still decide ownership — the AI's confidence
-      // feeds in, but can't override refund/escalation policy.
-      const ownerDecision = decideOwner(request, ai.confidence);
-      const built = buildActionAndResponse(request, ownerDecision, state, KNOWLEDGE_BASE);
-
-      return {
-        ...request,
-        priorityScore,
-        confidence: ai.confidence,
-        owner: ownerDecision.owner,
-        autonomous: ownerDecision.auto,
-        reasoning: `${ownerDecision.reason} — AI: "${ai.reasoning}"`,
-        action: built.action,
-        response: ai.response || built.response,
-      };
+    const userMessage = buildUserMessage({
+      copy,
+      currentRewrite: req.body.currentRewrite,
+      feedback: req.body.feedback,
     });
 
-    decisions.sort((a, b) => b.priorityScore - a.priorityScore);
-    decisions.forEach((d, i) => (d.priorityRank = i + 1));
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userMessage }],
+    });
 
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, decisions }));
+    const text = response.content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('');
+
+    const result = extractJson(text);
+    res.json(result);
   } catch (err) {
-    res.writeHead(500, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: false, error: err.message }));
+    console.error('Diagnose error:', err.message);
+    res.status(500).json({ error: err.message || 'Something went wrong.' });
   }
-}
-
-function serveStatic(req, res) {
-  const urlPath = req.url.split("?")[0];
-  const relPath = urlPath === "/" ? "/index.html" : urlPath;
-  const filePath = path.join(__dirname, relPath);
-
-  if (!filePath.startsWith(__dirname)) {
-    res.writeHead(403);
-    return res.end("Forbidden");
-  }
-
-  fs.readFile(filePath, (err, content) => {
-    if (err) {
-      res.writeHead(404);
-      return res.end("Not found");
-    }
-    const ext = path.extname(filePath);
-    res.writeHead(200, { "content-type": MIME_TYPES[ext] || "application/octet-stream" });
-    res.end(content);
-  });
-}
-
-const server = http.createServer((req, res) => {
-  if (req.method === "POST" && req.url === "/api/triage") {
-    return handleTriage(res);
-  }
-  return serveStatic(req, res);
 });
 
-server.listen(PORT, () => {
-  console.log(`Dental triage server running at http://localhost:${PORT}`);
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+app.listen(PORT, () => {
+  console.log(`Copy Doctor running at http://localhost:${PORT}  (model: ${MODEL})`);
   if (!process.env.ANTHROPIC_API_KEY) {
-    console.warn("Warning: ANTHROPIC_API_KEY not set — /api/triage will return an error and the frontend will fall back to the offline rule engine.");
+    console.warn('WARNING: ANTHROPIC_API_KEY is not set — API calls will fail.');
   }
 });

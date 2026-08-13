@@ -1,12 +1,17 @@
 {
-  "name": "dental-clinic-triage",
+  "name": "copy-doctor",
   "private": true,
   "version": "1.0.0",
-  "description": "Decision-support prototype for dental clinic request triage",
+  "description": "Copy Doctor — AI that diagnoses and rewrites marketing/listing copy",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "express": "^4.21.2"
   }
 }
